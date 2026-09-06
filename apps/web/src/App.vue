@@ -5,7 +5,7 @@ import { Message, Modal } from '@arco-design/web-vue';
 import { api, getAdminToken, setAdminToken } from './api';
 import RuntimeLogs from './RuntimeLogs.vue';
 import type { RequestLogFilters } from './api';
-import type { AccessKey, Provider, ProviderModel, ProviderProtocol, PublicSettings, RequestLog, RequestLogSummary } from './types';
+import type { AccessKey, Provider, ProviderModel, ProviderProtocol, RequestLog, RequestLogSummary } from './types';
 
 type View = 'overview' | 'providers' | 'monitor' | 'runtimeLogs' | 'accessKeys';
 type Theme = 'light' | 'dark';
@@ -71,7 +71,6 @@ watch(() => monitoringFilterForm.providerId, () => {
   }
 });
 
-const settings = ref<PublicSettings>({ hasAdminToken: false });
 const providerDrawer = ref(false);
 const editingProvider = ref(false);
 const saving = ref(false);
@@ -250,8 +249,7 @@ async function syncProviderModels() {
 async function loadAll() {
   loading.value = true;
   try {
-    const [nextSettings, nextProviders, logs, nextAccessKeys] = await Promise.all([api.settings(), api.providers(), api.requestLogs(200, 0), api.accessKeys()]);
-    settings.value = nextSettings;
+    const [nextProviders, logs, nextAccessKeys] = await Promise.all([api.providers(), api.requestLogs(200, 0), api.accessKeys()]);
     providers.value = nextProviders;
     accessKeys.value = nextAccessKeys;
     overviewLogs.value = logs.data;

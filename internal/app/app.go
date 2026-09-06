@@ -116,6 +116,9 @@ func Run(ctx context.Context, options Options) error {
 	if err := configStore.Load(); err != nil {
 		return err
 	}
+	if err := initializeAdminToken(configStore, os.Getenv("OMNI_ADMIN_TOKEN")); err != nil {
+		return err
+	}
 
 	var assets fs.FS
 	if directory := env("OMNI_STATIC_DIR", ""); directory != "" {
@@ -189,6 +192,17 @@ func Run(ctx context.Context, options Options) error {
 		err = shutdownErr
 	}
 	return err
+}
+
+func initializeAdminToken(configStore *store.Store, value string) error {
+	adminToken := strings.TrimSpace(value)
+	if adminToken == "" || configStore.Get().Settings.AdminToken != "" {
+		return nil
+	}
+	if err := configStore.UpdateSettings(&adminToken, nil); err != nil {
+		return fmt.Errorf("initialize admin token: %w", err)
+	}
+	return nil
 }
 
 func consoleURL(options Options, address net.Addr) string {

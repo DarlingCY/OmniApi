@@ -34,6 +34,11 @@ jobs:
       - name: Build and Export Offline Image (${{ matrix.arch }})
         shell: bash
         run: |
+          if [[ ! "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Unsupported release tag: ${{ github.ref_name }}" >&2
+            exit 1
+          fi
+
           mkdir -p release-assets
           PKG_NAME="omni-api-${{ github.ref_name }}-docker-${{ matrix.arch }}"
           IMAGE_TAG="omni-api:${{ github.ref_name }}"
@@ -41,7 +46,6 @@ jobs:
           echo "Building Docker image for ${{ matrix.platform }}..."
           docker buildx build \
             --platform ${{ matrix.platform }} \
-            --build-arg VERSION=${{ github.ref_name }} \
             -t "${IMAGE_TAG}" \
             -t "omni-api:latest" \
             --output type=docker,dest=release-assets/${PKG_NAME}.tar \
@@ -82,9 +86,10 @@ jobs:
               ports:
                 - "47831:47831"
               volumes:
-                - ./data:/data
+                - ./data:/data:Z
               environment:
                 - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:?请在启动前设置 OMNI_MASTER_KEY}
+                - OMNI_ADMIN_TOKEN=${OMNI_ADMIN_TOKEN:?请在启动前设置 OMNI_ADMIN_TOKEN}
 
           EOF
 
@@ -98,17 +103,21 @@ jobs:
 
           2. 一键启动服务（推荐）：
              在当前目录下包含 docker-compose.yml，并创建 data 目录，执行：
+             export OMNI_MASTER_KEY='请替换为强密码'
+             export OMNI_ADMIN_TOKEN='请替换为管理 Token'
              mkdir -p data
-             sudo chown -R 10001:10001 data
              docker compose up -d
 
           3. 也可以直接用命令行运行：
+             export OMNI_MASTER_KEY='请替换为强密码'
+             export OMNI_ADMIN_TOKEN='请替换为管理 Token'
              mkdir -p data
-             sudo chown -R 10001:10001 data
              docker run -d \
                --name omni-api \
                -p 47831:47831 \
-               -v "$(pwd)/data:/data" \
+               -e OMNI_MASTER_KEY="$OMNI_MASTER_KEY" \
+               -e OMNI_ADMIN_TOKEN="$OMNI_ADMIN_TOKEN" \
+               -v "$(pwd)/data:/data:Z" \
                --restart unless-stopped \
                omni-api:latest
           EOF

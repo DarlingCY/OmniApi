@@ -1,4 +1,4 @@
-import type { AccessKey, Provider, ProviderProtocol, PublicSettings, RequestLog, RequestLogSummary, RuntimeLog } from './types';
+import type { AccessKey, Provider, ProviderProtocol, RequestLog, RequestLogSummary, RuntimeLog } from './types';
 
 export interface RequestLogFilters {
   startedAfter?: string;
@@ -52,8 +52,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   runtimeLogs: (signal?: AbortSignal) => request<{ data: RuntimeLog[]; capacity: number }>('/api/v1/runtime-logs', { signal }),
-  settings: () => request<PublicSettings>('/api/v1/settings'),
-  saveSettings: (value: { adminToken?: string }) => request<PublicSettings>('/api/v1/settings', { method: 'PUT', body: JSON.stringify(value) }),
   providers: () => request<Provider[]>('/api/v1/providers'),
   syncProviderModels: (value: { providerId?: string; protocol: ProviderProtocol; baseUrl: string; apiKey?: string }) => request<{ models: string[] }>('/api/v1/providers/models:sync', { method: 'POST', body: JSON.stringify(value) }),
   createProvider: (value: Provider) => request<Provider>('/api/v1/providers', { method: 'POST', body: JSON.stringify(value) }),
@@ -66,7 +64,6 @@ export const api = {
     }
     return request<RequestLogsResult>(`/api/v1/request-logs?${query}`);
   },
-  clearRequestLogs: () => request<void>('/api/v1/request-logs', { method: 'DELETE' }),
   accessKeys: () => request<AccessKey[]>('/api/v1/access-keys'),
   accessKey: (id: string) => request<AccessKey>(`/api/v1/access-keys/${encodeURIComponent(id)}`),
   createAccessKey: (name: string, secret?: string) => request<AccessKey>('/api/v1/access-keys', { method: 'POST', body: JSON.stringify({ name, ...(secret !== undefined ? { secret } : {}) }) }),

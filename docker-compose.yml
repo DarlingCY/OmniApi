@@ -6,7 +6,9 @@ services:
     ports:
       - "47831:47831"
     volumes:
-      - ./data:/data
+      - ./data:/data:Z
     environment:
       # 必填：用于主密钥加密与数据解密，请设置强密码
       - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:?请在启动前设置 OMNI_MASTER_KEY}
+      # 必填：首次启动时初始化管理接口 Token
+      - OMNI_ADMIN_TOKEN=${OMNI_ADMIN_TOKEN:?请在启动前设置 OMNI_ADMIN_TOKEN}

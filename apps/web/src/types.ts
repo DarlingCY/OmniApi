@@ -25,10 +25,6 @@ export interface Provider {
   enabled: boolean;
 }
 
-export interface PublicSettings {
-  hasAdminToken: boolean;
-}
-
 export interface AccessKey {
   id: string;
   name: string;

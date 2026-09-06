@@ -10,8 +10,8 @@
     "web:build": "vite build --config apps/web/vite.config.ts",
     "go:build": "npm run web:build && go build -trimpath -ldflags \"-s -w\" -o omni-api.exe ./cmd/omni-api",
     "go:test": "go test ./internal/...",
-    "test": "tsx --test tests/**/*.test.ts",
-    "typecheck": "tsc --noEmit && npm run web:check"
+    "test": "npm run go:test",
+    "typecheck": "npm run web:check"
   },
   "dependencies": {
     "@arco-design/web-vue": "^2.58.0",
@@ -21,8 +21,6 @@
   "devDependencies": {
     "@types/node": "^22.15.3",
     "@vitejs/plugin-vue": "^6.0.8",
-    "concurrently": "^10.0.5",
-    "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vite": "^8.2.2",
     "vue-tsc": "^3.3.11"
