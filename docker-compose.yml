@@ -6,10 +6,7 @@ services:
     ports:
       - "47831:47831"
     volumes:
-      - omni-api-data:/data
+      - ./data:/data
     environment:
       # 必填：用于主密钥加密与数据解密，请设置强密码
       - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:?请在启动前设置 OMNI_MASTER_KEY}
-
-volumes:
-  omni-api-data:

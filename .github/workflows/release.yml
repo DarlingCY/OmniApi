@@ -82,12 +82,10 @@ jobs:
               ports:
                 - "47831:47831"
               volumes:
-                - omni-api-data:/data
+                - ./data:/data
               environment:
                 - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:?请在启动前设置 OMNI_MASTER_KEY}
 
-          volumes:
-            omni-api-data:
           EOF
 
           cat << 'EOF' > release-assets/导入镜像与运行说明.txt
@@ -99,14 +97,18 @@ jobs:
              (导入后本地将自动生成镜像标签 omni-api:latest 与 omni-api:v*)
 
           2. 一键启动服务（推荐）：
-             在当前目录下包含 docker-compose.yml，执行：
+             在当前目录下包含 docker-compose.yml，并创建 data 目录，执行：
+             mkdir -p data
+             sudo chown -R 10001:10001 data
              docker compose up -d
 
           3. 也可以直接用命令行运行：
+             mkdir -p data
+             sudo chown -R 10001:10001 data
              docker run -d \
                --name omni-api \
                -p 47831:47831 \
-               -v omni-api-data:/data \
+               -v "$(pwd)/data:/data" \
                --restart unless-stopped \
                omni-api:latest
           EOF
