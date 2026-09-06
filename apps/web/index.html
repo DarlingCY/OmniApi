@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>OmniApi 控制台</title>
+    <script>
+      (() => {
+        const saved = localStorage.getItem('omni-api-theme');
+        const theme = saved === 'light' || saved === 'dark'
+          ? saved
+          : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.dataset.theme = theme;
+        window.__omniApiTheme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    <script>
+      if (window.__omniApiTheme === 'dark') document.body.setAttribute('arco-theme', 'dark');
+    </script>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "name": "omni-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:go": "go run ./cmd/omni-api --mode server --host 127.0.0.1 --port 47832",
+    "dev:web": "vite --config apps/web/vite.config.ts",
+    "web:check": "vue-tsc -p apps/web/tsconfig.json --noEmit",
+    "web:build": "vite build --config apps/web/vite.config.ts",
+    "go:build": "npm run web:build && go build -trimpath -ldflags \"-s -w\" -o omni-api.exe ./cmd/omni-api",
+    "go:test": "go test ./internal/...",
+    "test": "tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit && npm run web:check"
+  },
+  "dependencies": {
+    "@arco-design/web-vue": "^2.58.0",
+    "@fastify/static": "^8.2.0",
+    "fastify": "^5.5.0",
+    "vue": "^3.5.42",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "concurrently": "^10.0.5",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^8.2.2",
+    "vue-tsc": "^3.3.11"
+  }
+}

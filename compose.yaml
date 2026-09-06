@@ -1,0 +1,16 @@
+services:
+  omni-api:
+    build: .
+    image: omni-api:latest
+    restart: unless-stopped
+    ports:
+      - "47831:47831"
+    volumes:
+      - omni-api-data:/data
+    environment:
+      # Required in server mode: without it the config file cannot be decrypted
+      # after the container is recreated with a fresh volume-less key file.
+      OMNI_MASTER_KEY: ${OMNI_MASTER_KEY:?set OMNI_MASTER_KEY before starting}
+
+volumes:
+  omni-api-data:

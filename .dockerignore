@@ -1,0 +1,11 @@
+# Ignore everything by default so the build context stays small.
+*
+!go.mod
+!go.sum
+!package.json
+!package-lock.json
+!cmd/**
+!internal/**
+!apps/web/**
+internal/webui/dist/**
+!internal/webui/dist/.gitkeep
