@@ -41,11 +41,11 @@ func New(options Options) *Server {
 		store:    options.Store,
 		assets:   options.Assets,
 		router:   routing.NewRouter(),
-		upstream: upstream.NewClient(60 * time.Second),
+		upstream: upstream.NewClient(0),
 		mux:      http.NewServeMux(),
 	}
 	server.routes()
-	server.LogRuntime("info", "", "网关已初始化", "上游单次请求超时为 60 秒；运行日志保留本次启动的最近 1000 条")
+	server.LogRuntime("info", "", "网关已初始化", "上游模型请求不限制总时长，由客户端连接控制取消；运行日志保留本次启动的最近 1000 条")
 	return server
 }
 

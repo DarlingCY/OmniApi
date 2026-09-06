@@ -24,6 +24,12 @@ func anthropicProvider(baseURL string) model.Provider {
 	}
 }
 
+func TestNewClientZeroDisablesTotalRequestTimeout(t *testing.T) {
+	if timeout := NewClient(0).httpClient.Timeout; timeout != 0 {
+		t.Fatalf("expected no total request timeout, got %s", timeout)
+	}
+}
+
 func TestAnthropicPathAndHeaders(t *testing.T) {
 	captured := struct {
 		path    string
