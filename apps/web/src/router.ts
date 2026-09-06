@@ -10,7 +10,7 @@ export const router = createRouter({
     { path: '/monitor', name: 'monitor', component: App },
     { path: '/runtime-logs', name: 'runtimeLogs', component: App },
     { path: '/access-keys', name: 'accessKeys', component: App },
-    { path: '/settings', name: 'settings', component: App },
+    { path: '/settings', redirect: '/overview' },
     { path: '/:pathMatch(.*)*', redirect: '/overview' },
   ],
 });

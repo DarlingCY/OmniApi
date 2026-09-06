@@ -84,7 +84,7 @@ jobs:
               volumes:
                 - omni-api-data:/data
               environment:
-                - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:-}
+                - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:?请在启动前设置 OMNI_MASTER_KEY}
 
           volumes:
             omni-api-data:

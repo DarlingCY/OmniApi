@@ -7,7 +7,7 @@ import RuntimeLogs from './RuntimeLogs.vue';
 import type { RequestLogFilters } from './api';
 import type { AccessKey, Provider, ProviderModel, ProviderProtocol, PublicSettings, RequestLog, RequestLogSummary } from './types';
 
-type View = 'overview' | 'providers' | 'monitor' | 'runtimeLogs' | 'accessKeys' | 'settings';
+type View = 'overview' | 'providers' | 'monitor' | 'runtimeLogs' | 'accessKeys';
 type Theme = 'light' | 'dark';
 
 const route = useRoute();
@@ -605,7 +605,6 @@ onUnmounted(() => {
           <button :class="{ active: view === 'monitor' }" @click="view = 'monitor'"><icon-safe />请求监控</button>
           <button :class="{ active: view === 'runtimeLogs' }" @click="view = 'runtimeLogs'"><icon-code />运行日志</button>
           <button :class="{ active: view === 'accessKeys' }" @click="view = 'accessKeys'"><icon-lock />鉴权密钥</button>
-          <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><icon-settings />访问设置</button>
         </nav>
         <div class="sidebar-footer">
           <a-tooltip :content="theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'" position="right">
@@ -728,15 +727,6 @@ onUnmounted(() => {
             </div>
           </a-spin>
           <div v-if="monitoringTotal > 0" class="monitor-pagination"><span>共 {{ formatNumber(monitoringTotal) }} 条</span><a-pagination v-model:current="monitoringPage" :total="monitoringTotal" :page-size="monitoringPageSize" /></div>
-        </section>
-
-        <section v-if="view === 'settings'" class="surface settings-panel">
-          <div class="section-heading"><h2>访问设置</h2></div>
-          <a-alert type="warning">出于安全考虑，已保存的管理 Token 不会回显。留空表示不修改。</a-alert>
-          <a-form :model="settingForm" layout="vertical" @submit-success="saveSettings">
-            <a-form-item label="新管理 Token"><a-input-password v-model="settingForm.adminToken" :placeholder="settings.hasAdminToken ? '已设置，输入新值以替换' : '首次设置后控制台需要此 Token'" /></a-form-item>
-            <a-button type="primary" html-type="submit" :loading="saving">保存管理 Token</a-button>
-          </a-form>
         </section>
 
         <section v-if="view === 'accessKeys'" class="surface access-keys-surface">
