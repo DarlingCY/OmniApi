@@ -1,15 +1,9 @@
-# Ignore everything by default so the build context stays small.
-*
-!go.mod
-!go.sum
-!package.json
-!package-lock.json
-!cmd
-!cmd/**
-!internal
-!internal/**
-!apps
-!apps/web
-!apps/web/**
-internal/webui/dist/**
-!internal/webui/dist/.gitkeep
+# Keep source files available to the multi-stage Docker build.
+node_modules
+internal/webui/dist
+.git
+.github
+.vscode
+*.exe
+*.log
+.tmp-*
