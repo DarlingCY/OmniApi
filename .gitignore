@@ -4,5 +4,6 @@ internal/webui/dist/*
 /omni-api
 /omni-api.exe
 *.exe
+*.exe~
 *.log
 .tmp-*
