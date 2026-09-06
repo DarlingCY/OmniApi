@@ -1,4 +1,4 @@
-name: Release
+name: Docker Release
 
 on:
   push:
@@ -10,126 +10,6 @@ permissions:
   packages: write
 
 jobs:
-  build:
-    name: Build (${{ matrix.os }}-${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: windows-latest
-            os: windows
-            arch: amd64
-            binary_name: omni-api.exe
-            archive_format: zip
-          - runner: windows-latest
-            os: windows
-            arch: arm64
-            binary_name: omni-api.exe
-            archive_format: zip
-          - runner: ubuntu-latest
-            os: linux
-            arch: amd64
-            binary_name: omni-api
-            archive_format: tar.gz
-          - runner: ubuntu-latest
-            os: linux
-            arch: arm64
-            binary_name: omni-api
-            archive_format: tar.gz
-          - runner: macos-latest
-            os: darwin
-            arch: arm64
-            binary_name: omni-api
-            archive_format: tar.gz
-          - runner: macos-13
-            os: darwin
-            arch: amd64
-            binary_name: omni-api
-            archive_format: tar.gz
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'npm'
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          check-latest: true
-
-      - name: Install dependencies & build frontend
-        run: |
-          npm ci
-          npm run web:build
-
-      - name: Compile binary
-        shell: bash
-        env:
-          GOOS: ${{ matrix.os }}
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: '0'
-        run: |
-          go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o "${{ matrix.binary_name }}" ./cmd/omni-api
-
-      - name: Package asset (tar.gz)
-        if: matrix.archive_format == 'tar.gz'
-        shell: bash
-        run: |
-          PKG_NAME="omni-api-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}"
-          mkdir -p "release/${PKG_NAME}"
-          cp "${{ matrix.binary_name }}" "release/${PKG_NAME}/"
-          cp README.md LICENSE "release/${PKG_NAME}/" 2>/dev/null || true
-          tar -czf "release/${PKG_NAME}.tar.gz" -C release "${PKG_NAME}"
-          cd release
-          sha256sum "${PKG_NAME}.tar.gz" > "${PKG_NAME}.tar.gz.sha256"
-
-      - name: Package asset (zip)
-        if: matrix.archive_format == 'zip'
-        shell: pwsh
-        run: |
-          $pkgName = "omni-api-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}"
-          New-Item -ItemType Directory -Path "release/$pkgName" -Force | Out-Null
-          Copy-Item "${{ matrix.binary_name }}" -Destination "release/$pkgName/"
-          if (Test-Path "README.md") { Copy-Item "README.md" -Destination "release/$pkgName/" }
-          if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination "release/$pkgName/" }
-          Compress-Archive -Path "release/$pkgName" -DestinationPath "release/$pkgName.zip" -Force
-          Set-Location release
-          $hash = (Get-FileHash -Algorithm SHA256 "$pkgName.zip").Hash.ToLower()
-          "$hash  $pkgName.zip" | Out-File -FilePath "$pkgName.zip.sha256" -Encoding ascii
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: assets-${{ matrix.os }}-${{ matrix.arch }}
-          path: release/*
-          if-no-files-found: error
-
-  release:
-    name: Create GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          merge-multiple: true
-
-      - name: Publish Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-assets/*
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-
   docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
@@ -160,6 +40,27 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
+      - name: Generate docker-compose.yml for release
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cat << EOF > release-assets/docker-compose.yml
+          services:
+            omni-api:
+              image: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+              container_name: omni-api
+              restart: unless-stopped
+              ports:
+                - "47831:47831"
+              volumes:
+                - omni-api-data:/data
+              environment:
+                - OMNI_MASTER_KEY=\${OMNI_MASTER_KEY:-}
+
+          volumes:
+            omni-api-data:
+          EOF
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -172,3 +73,11 @@ jobs:
             VERSION=${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/docker-compose.yml
+          generate_release_notes: true
+          draft: false
+          prerelease: false

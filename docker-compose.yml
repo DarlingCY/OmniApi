@@ -1,0 +1,15 @@
+services:
+  omni-api:
+    image: ghcr.io/darlingcy/omniapi:latest
+    container_name: omni-api
+    restart: unless-stopped
+    ports:
+      - "47831:47831"
+    volumes:
+      - omni-api-data:/data
+    environment:
+      # 可选：如果设置了 OMNI_MASTER_KEY，数据迁移与密钥解密更加安全稳定
+      - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:-}
+
+volumes:
+  omni-api-data:
