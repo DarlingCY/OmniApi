@@ -19,6 +19,7 @@ func newTestStore(t *testing.T) *store.Store {
 	if err := configStore.Load(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = configStore.Close() })
 	return configStore
 }
 

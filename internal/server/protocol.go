@@ -267,6 +267,13 @@ func writeStream(writer http.ResponseWriter, kind, modelName string, source *ups
 			flusher.Flush()
 		}
 	}
+	emit := func(name string, payload any) bool {
+		if err := writeEvent(writer, name, payload); err != nil {
+			source.SetError(err)
+			return false
+		}
+		return true
+	}
 
 	responseID := "resp_" + requestID
 	messageID := responseID + "_msg"
@@ -276,43 +283,43 @@ func writeStream(writer http.ResponseWriter, kind, modelName string, source *ups
 		return sequenceNumber
 	}
 	if kind == kindResponses {
-		writeEvent(writer, "response.created", map[string]any{
+		if !emit("response.created", map[string]any{
 			"type": "response.created", "sequence_number": nextSequence(),
 			"response": map[string]any{
 				"id": responseID, "object": "response", "created_at": startedAt.Unix(),
 				"status": "in_progress", "model": modelName, "output": []any{}, "error": nil,
 			},
-		})
-		writeEvent(writer, "response.in_progress", map[string]any{
+		}) || !emit("response.in_progress", map[string]any{
 			"type": "response.in_progress", "sequence_number": nextSequence(),
 			"response": map[string]any{
 				"id": responseID, "object": "response", "created_at": startedAt.Unix(),
 				"status": "in_progress", "model": modelName, "output": []any{},
 			},
-		})
-		writeEvent(writer, "response.output_item.added", map[string]any{
+		}) || !emit("response.output_item.added", map[string]any{
 			"type": "response.output_item.added", "sequence_number": nextSequence(), "output_index": 0,
 			"item": map[string]any{"id": messageID, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{}},
-		})
-		writeEvent(writer, "response.content_part.added", map[string]any{
+		}) || !emit("response.content_part.added", map[string]any{
 			"type": "response.content_part.added", "sequence_number": nextSequence(), "item_id": messageID,
 			"output_index": 0, "content_index": 0,
 			"part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}},
-		})
+		}) {
+			return 0, int(time.Since(startedAt).Milliseconds())
+		}
 		flush()
 	} else if kind == kindMessages {
-		writeEvent(writer, "message_start", map[string]any{
+		if !emit("message_start", map[string]any{
 			"type": "message_start",
 			"message": map[string]any{
 				"id": "msg_" + requestID, "type": "message", "role": "assistant",
 				"model": modelName, "content": []any{}, "stop_reason": nil, "stop_sequence": nil,
 				"usage": messageUsage(model.Usage{}),
 			},
-		})
-		writeEvent(writer, "content_block_start", map[string]any{
+		}) || !emit("content_block_start", map[string]any{
 			"type": "content_block_start", "index": 0,
 			"content_block": map[string]any{"type": "text", "text": ""},
-		})
+		}) {
+			return 0, int(time.Since(startedAt).Milliseconds())
+		}
 		flush()
 	}
 
@@ -326,24 +333,30 @@ func writeStream(writer http.ResponseWriter, kind, modelName string, source *ups
 		if firstTokenMs == 0 {
 			firstTokenMs = int(time.Since(startedAt).Milliseconds())
 		}
-		content.WriteString(delta)
+		if kind == kindResponses {
+			content.WriteString(delta)
+		}
+		written := false
 		switch kind {
 		case kindResponses:
-			writeEvent(writer, "response.output_text.delta", map[string]any{
+			written = emit("response.output_text.delta", map[string]any{
 				"type": "response.output_text.delta", "sequence_number": nextSequence(), "item_id": messageID,
 				"output_index": 0, "content_index": 0, "delta": delta,
 			})
 		case kindMessages:
-			writeEvent(writer, "content_block_delta", map[string]any{
+			written = emit("content_block_delta", map[string]any{
 				"type": "content_block_delta", "index": 0,
 				"delta": map[string]any{"type": "text_delta", "text": delta},
 			})
 		default:
-			writeEvent(writer, "", map[string]any{
+			written = emit("", map[string]any{
 				"id": "chatcmpl_" + requestID, "object": "chat.completion.chunk",
 				"created": startedAt.Unix(), "model": modelName,
 				"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": delta}, "finish_reason": nil}},
 			})
+		}
+		if !written {
+			return firstTokenMs, int(time.Since(startedAt).Milliseconds())
 		}
 		flush()
 	}
@@ -364,51 +377,56 @@ func writeStream(writer http.ResponseWriter, kind, modelName string, source *ups
 	switch kind {
 	case kindResponses:
 		usage := source.Usage()
-		writeEvent(writer, "response.output_text.done", map[string]any{
+		completedText := content.String()
+		if !emit("response.output_text.done", map[string]any{
 			"type": "response.output_text.done", "sequence_number": nextSequence(), "item_id": messageID,
-			"output_index": 0, "content_index": 0, "text": content.String(),
-		})
-		writeEvent(writer, "response.content_part.done", map[string]any{
+			"output_index": 0, "content_index": 0, "text": completedText,
+		}) || !emit("response.content_part.done", map[string]any{
 			"type": "response.content_part.done", "sequence_number": nextSequence(), "item_id": messageID,
 			"output_index": 0, "content_index": 0,
-			"part": map[string]any{"type": "output_text", "text": content.String(), "annotations": []any{}},
-		})
-		writeEvent(writer, "response.output_item.done", map[string]any{
+			"part": map[string]any{"type": "output_text", "text": completedText, "annotations": []any{}},
+		}) || !emit("response.output_item.done", map[string]any{
 			"type": "response.output_item.done", "sequence_number": nextSequence(), "output_index": 0,
 			"item": map[string]any{
 				"id": messageID, "type": "message", "status": "completed", "role": "assistant",
-				"content": []any{map[string]any{"type": "output_text", "text": content.String(), "annotations": []any{}}},
+				"content": []any{map[string]any{"type": "output_text", "text": completedText, "annotations": []any{}}},
 			},
-		})
-		writeEvent(writer, "response.completed", map[string]any{
+		}) || !emit("response.completed", map[string]any{
 			"type": "response.completed", "sequence_number": nextSequence(),
-			"response": responsesObject(requestID, modelName, content.String(), usage, request, startedAt),
-		})
+			"response": responsesObject(requestID, modelName, completedText, usage, request, startedAt),
+		}) {
+			return firstTokenMs, int(time.Since(startedAt).Milliseconds())
+		}
 	case kindMessages:
 		usage := source.Usage()
-		writeEvent(writer, "content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
-		writeEvent(writer, "message_delta", map[string]any{
+		if !emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}) || !emit("message_delta", map[string]any{
 			"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
 			"usage": messageUsage(usage),
-		})
-		writeEvent(writer, "message_stop", map[string]any{"type": "message_stop"})
+		}) || !emit("message_stop", map[string]any{"type": "message_stop"}) {
+			return firstTokenMs, int(time.Since(startedAt).Milliseconds())
+		}
 	default:
-		writeEvent(writer, "", map[string]any{
+		if !emit("", map[string]any{
 			"id": "chatcmpl_" + requestID, "object": "chat.completion.chunk",
 			"created": startedAt.Unix(), "model": modelName,
 			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
 			"usage":   chatUsage(source.Usage()),
-		})
-		fmt.Fprint(writer, "data: [DONE]\n\n")
+		}) {
+			return firstTokenMs, int(time.Since(startedAt).Milliseconds())
+		}
+		if _, err := fmt.Fprint(writer, "data: [DONE]\n\n"); err != nil {
+			source.SetError(err)
+			return firstTokenMs, int(time.Since(startedAt).Milliseconds())
+		}
 	}
 	flush()
 	return firstTokenMs, int(time.Since(startedAt).Milliseconds())
 }
 
-func writeEvent(writer http.ResponseWriter, name string, payload any) {
+func writeEvent(writer http.ResponseWriter, name string, payload any) error {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return err
 	}
 	builder := strings.Builder{}
 	if name != "" {
@@ -419,5 +437,6 @@ func writeEvent(writer http.ResponseWriter, name string, payload any) {
 	builder.WriteString("data: ")
 	builder.Write(encoded)
 	builder.WriteString("\n\n")
-	fmt.Fprint(writer, builder.String())
+	_, err = fmt.Fprint(writer, builder.String())
+	return err
 }

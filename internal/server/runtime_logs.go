@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +24,10 @@ type runtimeLog struct {
 }
 
 type runtimeLogBuffer struct {
-	mutex sync.Mutex
-	next  uint64
-	items []runtimeLog
+	mutex      sync.Mutex
+	generation string
+	next       uint64
+	items      []runtimeLog
 }
 
 func (b *runtimeLogBuffer) add(entry runtimeLog) {
@@ -64,12 +66,26 @@ func (s *Server) LogRuntime(level, requestID, message, detail string) {
 	s.runtimeLogs.add(runtimeLog{Level: level, RequestID: requestID, Message: message, Detail: detail})
 }
 
-func (s *Server) listRuntimeLogs(writer http.ResponseWriter, _ *http.Request) {
+func (s *Server) listRuntimeLogs(writer http.ResponseWriter, request *http.Request) {
 	s.runtimeLogs.mutex.Lock()
-	items := append([]runtimeLog{}, s.runtimeLogs.items...)
+	afterID := uint64(0)
+	if value := request.URL.Query().Get("afterId"); value != "" {
+		if parsed, err := strconv.ParseUint(value, 10, 64); err == nil {
+			afterID = parsed
+		}
+	}
+	items := make([]runtimeLog, 0, len(s.runtimeLogs.items))
+	for _, item := range s.runtimeLogs.items {
+		if item.ID > afterID {
+			items = append(items, item)
+		}
+	}
+	generation := s.runtimeLogs.generation
 	s.runtimeLogs.mutex.Unlock()
 	writer.Header().Set("cache-control", "no-store")
-	writeJSON(writer, http.StatusOK, map[string]any{"data": items, "capacity": runtimeLogCapacity})
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"data": items, "capacity": runtimeLogCapacity, "generation": generation,
+	})
 }
 
 func targetDetail(target model.Target, attempt int) string {

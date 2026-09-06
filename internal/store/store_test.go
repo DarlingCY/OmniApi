@@ -3,10 +3,12 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +23,9 @@ func testStore(t *testing.T) (*Store, string, secret.Codec) {
 	if err != nil {
 		t.Fatalf("codec setup failed: %v", err)
 	}
-	return New(filepath.Join(directory, "omni-api.db"), codec), directory, codec
+	store := New(filepath.Join(directory, "omni-api.db"), codec)
+	t.Cleanup(func() { _ = store.Close() })
+	return store, directory, codec
 }
 
 func testConfig() model.Config {
@@ -51,6 +55,7 @@ func TestSQLiteRoundTripEncryptsSecretsAndPreservesModelOrder(t *testing.T) {
 		}
 	}
 	reopened := New(filepath.Join(directory, "omni-api.db"), codec)
+	t.Cleanup(func() { _ = reopened.Close() })
 	if err := reopened.Load(); err != nil {
 		t.Fatalf("load failed: %v", err)
 	}
@@ -129,6 +134,7 @@ func TestLoadAddsAliasColumnToLegacyProviderModels(t *testing.T) {
 		t.Fatalf("expected one provider model with an empty alias, got %#v", providers)
 	}
 	reopened := New(path, codec)
+	t.Cleanup(func() { _ = reopened.Close() })
 	if err := reopened.Replace(model.Config{Providers: []model.Provider{{
 		ID: "first", Name: "First", BaseURL: "https://first.test", Protocol: model.ProtocolOpenAIChat, Enabled: true,
 		Models: []model.ProviderModel{{ID: "one", UpstreamModel: "first-one", Alias: "chat"}},
@@ -165,6 +171,68 @@ func TestRequestLogsRoundTripAndClear(t *testing.T) {
 	entries, total, err = configStore.RequestLogs(50, 0)
 	if err != nil || total != 0 || len(entries) != 0 {
 		t.Fatalf("expected empty logs after clear, total=%d entries=%#v err=%v", total, entries, err)
+	}
+}
+
+func TestRequestLogsCleanupRunsInBatches(t *testing.T) {
+	configStore, _, _ := testStore(t)
+	database, err := configStore.ensureDatabase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := database.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 10001; index++ {
+		if _, err := transaction.Exec(`INSERT INTO request_logs (
+			id, started_at, inbound, exposed_model, upstream_model, provider_id, provider_name,
+			client_address, stream, status, attempts, error, input_tokens, output_tokens,
+			cached_tokens, cache_creation_tokens, reasoning_tokens, first_token_ms, duration_ms
+		) VALUES (?, ?, '', '', '', '', '', '', 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0)`,
+			fmt.Sprintf("seed-%05d", index), time.Unix(int64(index), 0).UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	configStore.requestWrites.Store(99)
+	if err := configStore.AddRequestLog(model.RequestLog{ID: "trigger", StartedAt: time.Unix(20000, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	var total int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM request_logs`).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 10000 {
+		t.Fatalf("expected cleanup to retain 10000 logs, got %d", total)
+	}
+}
+
+func TestConcurrentAccessKeyAddsPreserveEveryKey(t *testing.T) {
+	configStore, _, _ := testStore(t)
+	const count = 12
+	var wait sync.WaitGroup
+	errors := make(chan error, count)
+	for index := 0; index < count; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			errors <- configStore.AddAccessKey(model.AccessKey{
+				ID: fmt.Sprintf("key-%d", index), Secret: fmt.Sprintf("secret-%d", index),
+			})
+		}(index)
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(configStore.Get().AccessKeys); got != count {
+		t.Fatalf("expected %d access keys, got %d", count, got)
 	}
 }
 

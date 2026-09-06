@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Message, Modal } from '@arco-design/web-vue';
 import { api, getAdminToken, setAdminToken } from './api';
@@ -20,10 +20,10 @@ const theme = ref<Theme>(document.documentElement.dataset.theme === 'dark' ? 'da
 const loading = ref(true);
 const runtimeLogsView = ref<InstanceType<typeof RuntimeLogs>>();
 const unauthorized = ref(false);
-const providers = ref<Provider[]>([]);
-const accessKeys = ref<AccessKey[]>([]);
-const requestLogs = ref<RequestLog[]>([]);
-const overviewLogs = ref<RequestLog[]>([]);
+const providers = shallowRef<Provider[]>([]);
+const accessKeys = shallowRef<AccessKey[]>([]);
+const requestLogs = shallowRef<RequestLog[]>([]);
+const overviewLogs = shallowRef<RequestLog[]>([]);
 const requestLogTotal = ref(0);
 const monitoringTotal = ref(0);
 const serverSummary = ref<RequestLogSummary | null>(null);
@@ -264,18 +264,27 @@ async function loadAll() {
   }
 }
 
+async function loadProviders() {
+  providers.value = await api.providers();
+}
+
+let monitoringRequestVersion = 0;
 async function loadRequestLogs(silent = false) {
+  const requestVersion = ++monitoringRequestVersion;
+  const page = monitoringPage.value;
+  const filters = { ...monitoringFilters.value };
   if (!silent) monitoringLoading.value = true;
   try {
-    const result = await api.requestLogs(monitoringPageSize, (monitoringPage.value - 1) * monitoringPageSize, monitoringFilters.value);
+    const result = await api.requestLogs(monitoringPageSize, (page - 1) * monitoringPageSize, filters);
+    if (requestVersion !== monitoringRequestVersion) return;
     requestLogs.value = result.data;
     monitoringTotal.value = result.total;
     serverSummary.value = result.summary ?? null;
-    if (!monitoringFiltered.value) requestLogTotal.value = result.total;
+    if (!Object.values(filters).some((value) => value)) requestLogTotal.value = result.total;
   } catch (error) {
-    if (!silent) Message.error((error as Error).message);
+    if (requestVersion === monitoringRequestVersion && !silent) Message.error((error as Error).message);
   } finally {
-    monitoringLoading.value = false;
+    if (requestVersion === monitoringRequestVersion) monitoringLoading.value = false;
   }
 }
 
@@ -397,7 +406,7 @@ async function saveProvider() {
     if (editingProvider.value) await api.updateProvider(payload); else await api.createProvider(payload);
     providerDrawer.value = false;
     Message.success('供应商已保存');
-    await loadAll();
+    await loadProviders();
   } catch (error) { Message.error((error as Error).message); }
   finally { saving.value = false; }
 }
@@ -412,6 +421,7 @@ async function toggleProvider(provider: Provider, enabled: boolean) {
     delete payload.apiKey;
     await api.updateProvider(payload);
     provider.enabled = enabled;
+    providers.value = [...providers.value];
     Message.success(enabled ? '供应商已启用' : '供应商已停用');
   } catch (error) { Message.error((error as Error).message); }
   finally { updatingProviders[provider.id] = false; }
@@ -427,7 +437,7 @@ function confirmDeleteProvider(id: string, name: string) {
       try {
         await api.deleteProvider(id);
         Message.success('已删除');
-        await loadAll();
+        await loadProviders();
       } catch (error) { Message.error((error as Error).message); }
     },
   });
@@ -473,6 +483,7 @@ async function toggleAccessKey(accessKey: AccessKey, enabled: boolean) {
   try {
     await api.updateAccessKey({ ...accessKey, enabled });
     accessKey.enabled = enabled;
+    accessKeys.value = [...accessKeys.value];
     Message.success(enabled ? '密钥已启用' : '密钥已停用');
   } catch (error) { Message.error((error as Error).message); }
 }
@@ -543,13 +554,21 @@ watch(
 );
 
 let monitoringTimer: number | undefined;
+function refreshMonitoringWhenVisible() {
+  if (!document.hidden && view.value === 'monitor' && !loading.value && !unauthorized.value) {
+    void loadRequestLogs(true);
+  }
+}
+
 watch([view, loading, unauthorized], ([next, isLoading, isUnauthorized]) => {
   if (monitoringTimer) window.clearInterval(monitoringTimer);
   monitoringTimer = undefined;
   if (next === 'monitor' && !isLoading && !isUnauthorized) {
     monitoringPage.value = 1;
     void loadRequestLogs();
-    monitoringTimer = window.setInterval(() => void loadRequestLogs(true), 5000);
+    monitoringTimer = window.setInterval(() => {
+      if (!document.hidden) void loadRequestLogs(true);
+    }, 5000);
   }
 });
 
@@ -557,11 +576,13 @@ watch(monitoringPage, () => void loadRequestLogs());
 
 onMounted(() => {
   systemTheme.addEventListener('change', followSystemTheme);
+  document.addEventListener('visibilitychange', refreshMonitoringWhenVisible);
   void loadAll();
 });
 onUnmounted(() => {
   if (monitoringTimer) window.clearInterval(monitoringTimer);
   systemTheme.removeEventListener('change', followSystemTheme);
+  document.removeEventListener('visibilitychange', refreshMonitoringWhenVisible);
 });
 </script>
 

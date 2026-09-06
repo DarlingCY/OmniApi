@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -19,13 +20,22 @@ import (
 
 // ErrAccessKeyExists is returned when a credential is already registered.
 var ErrAccessKeyExists = errors.New("access key already exists")
+var ErrProviderExists = errors.New("provider already exists")
+var ErrProviderNotFound = errors.New("provider not found")
+var ErrClosed = errors.New("store is closed")
 
 // Store keeps the gateway configuration in memory and in SQLite.
 type Store struct {
-	path   string
-	codec  secret.Codec
-	mutex  sync.RWMutex
-	config model.Config
+	path          string
+	codec         secret.Codec
+	database      *sql.DB
+	closed        bool
+	requestWrites atomic.Uint32
+	databaseMutex sync.Mutex
+	databaseOps   sync.RWMutex
+	configWrite   sync.Mutex
+	mutex         sync.RWMutex
+	config        model.Config
 }
 
 // New creates a store backed by a SQLite database and a secret codec.
@@ -35,13 +45,10 @@ func New(path string, codec secret.Codec) *Store {
 
 // Load initializes the database and loads its configuration into memory.
 func (s *Store) Load() error {
-	database, err := s.open()
+	s.databaseOps.Lock()
+	defer s.databaseOps.Unlock()
+	database, err := s.ensureDatabase()
 	if err != nil {
-		return err
-	}
-	defer database.Close()
-
-	if err := initialize(database); err != nil {
 		return err
 	}
 	configured, err := hasConfiguration(database)
@@ -83,6 +90,21 @@ func (s *Store) Load() error {
 	return nil
 }
 
+// Close releases the SQLite connection owned by the store.
+func (s *Store) Close() error {
+	s.databaseOps.Lock()
+	defer s.databaseOps.Unlock()
+	s.databaseMutex.Lock()
+	defer s.databaseMutex.Unlock()
+	database := s.database
+	s.database = nil
+	s.closed = true
+	if database == nil {
+		return nil
+	}
+	return database.Close()
+}
+
 // Get returns a deep copy of the current configuration.
 func (s *Store) Get() model.Config {
 	s.mutex.RLock()
@@ -92,12 +114,39 @@ func (s *Store) Get() model.Config {
 
 // Replace persists a full configuration atomically.
 func (s *Store) Replace(config model.Config) error {
-	database, err := s.open()
+	s.configWrite.Lock()
+	defer s.configWrite.Unlock()
+	return s.replace(config)
+}
+
+func (s *Store) replace(config model.Config) error {
+	s.databaseOps.RLock()
+	defer s.databaseOps.RUnlock()
+	database, err := s.ensureDatabase()
 	if err != nil {
 		return err
 	}
-	defer database.Close()
-	if err := initialize(database); err != nil {
+	if err := replaceConfig(database, s.codec, config); err != nil {
+		return err
+	}
+	s.mutex.Lock()
+	s.config = config.Clone()
+	s.mutex.Unlock()
+	return nil
+}
+
+// Update applies and persists one configuration mutation atomically.
+func (s *Store) Update(mutate func(*model.Config) error) error {
+	s.configWrite.Lock()
+	defer s.configWrite.Unlock()
+	s.databaseOps.RLock()
+	defer s.databaseOps.RUnlock()
+	config := s.Get()
+	if err := mutate(&config); err != nil {
+		return err
+	}
+	database, err := s.ensureDatabase()
+	if err != nil {
 		return err
 	}
 	if err := replaceConfig(database, s.codec, config); err != nil {
@@ -111,14 +160,15 @@ func (s *Store) Replace(config model.Config) error {
 
 // UpdateSettings merges provided tokens, leaving nil fields untouched.
 func (s *Store) UpdateSettings(adminToken, proxyToken *string) error {
-	config := s.Get()
-	if adminToken != nil {
-		config.Settings.AdminToken = *adminToken
-	}
-	if proxyToken != nil {
-		config.Settings.ProxyToken = *proxyToken
-	}
-	return s.Replace(config)
+	return s.Update(func(config *model.Config) error {
+		if adminToken != nil {
+			config.Settings.AdminToken = *adminToken
+		}
+		if proxyToken != nil {
+			config.Settings.ProxyToken = *proxyToken
+		}
+		return nil
+	})
 }
 
 // ProviderAPIKey returns the stored key for a provider id.
@@ -133,16 +183,64 @@ func (s *Store) ProviderAPIKey(providerID string) string {
 	return ""
 }
 
+// AddProvider persists a provider without overwriting concurrent config changes.
+func (s *Store) AddProvider(provider model.Provider) error {
+	return s.Update(func(config *model.Config) error {
+		for _, existing := range config.Providers {
+			if existing.ID == provider.ID {
+				return ErrProviderExists
+			}
+		}
+		config.Providers = append(config.Providers, provider)
+		return nil
+	})
+}
+
+// UpdateProvider replaces one provider while preserving its key when omitted.
+func (s *Store) UpdateProvider(id string, replacement model.Provider, apiKey *string) error {
+	return s.Update(func(config *model.Config) error {
+		for index := range config.Providers {
+			if config.Providers[index].ID != id {
+				continue
+			}
+			replacement.ID = id
+			if apiKey == nil {
+				replacement.APIKey = config.Providers[index].APIKey
+			} else {
+				replacement.APIKey = *apiKey
+			}
+			config.Providers[index] = replacement
+			return nil
+		}
+		return ErrProviderNotFound
+	})
+}
+
+// DeleteProvider removes one provider without overwriting concurrent config changes.
+func (s *Store) DeleteProvider(id string) error {
+	return s.Update(func(config *model.Config) error {
+		for index := range config.Providers {
+			if config.Providers[index].ID != id {
+				continue
+			}
+			config.Providers = append(config.Providers[:index], config.Providers[index+1:]...)
+			return nil
+		}
+		return ErrProviderNotFound
+	})
+}
+
 // AddAccessKey persists a newly generated external credential.
 func (s *Store) AddAccessKey(accessKey model.AccessKey) error {
-	config := s.Get()
-	for _, existing := range config.AccessKeys {
-		if existing.Secret == accessKey.Secret {
-			return ErrAccessKeyExists
+	return s.Update(func(config *model.Config) error {
+		for _, existing := range config.AccessKeys {
+			if existing.Secret == accessKey.Secret {
+				return ErrAccessKeyExists
+			}
 		}
-	}
-	config.AccessKeys = append(config.AccessKeys, accessKey)
-	return s.Replace(config)
+		config.AccessKeys = append(config.AccessKeys, accessKey)
+		return nil
+	})
 }
 
 func accessKeyPrefix(secretValue string) string {
@@ -155,29 +253,37 @@ func accessKeyPrefix(secretValue string) string {
 
 // UpdateAccessKey changes the display name and enabled state of an access key.
 func (s *Store) UpdateAccessKey(id, name string, enabled bool) (bool, error) {
-	config := s.Get()
-	for index := range config.AccessKeys {
-		if config.AccessKeys[index].ID != id {
-			continue
+	found := false
+	err := s.Update(func(config *model.Config) error {
+		for index := range config.AccessKeys {
+			if config.AccessKeys[index].ID != id {
+				continue
+			}
+			config.AccessKeys[index].Name = name
+			config.AccessKeys[index].Enabled = enabled
+			found = true
+			return nil
 		}
-		config.AccessKeys[index].Name = name
-		config.AccessKeys[index].Enabled = enabled
-		return true, s.Replace(config)
-	}
-	return false, nil
+		return nil
+	})
+	return found, err
 }
 
 // DeleteAccessKey removes an external credential.
 func (s *Store) DeleteAccessKey(id string) (bool, error) {
-	config := s.Get()
-	for index := range config.AccessKeys {
-		if config.AccessKeys[index].ID != id {
-			continue
+	found := false
+	err := s.Update(func(config *model.Config) error {
+		for index := range config.AccessKeys {
+			if config.AccessKeys[index].ID != id {
+				continue
+			}
+			config.AccessKeys = append(config.AccessKeys[:index], config.AccessKeys[index+1:]...)
+			found = true
+			return nil
 		}
-		config.AccessKeys = append(config.AccessKeys[:index], config.AccessKeys[index+1:]...)
-		return true, s.Replace(config)
-	}
-	return false, nil
+		return nil
+	})
+	return found, err
 }
 
 // HasAccessKey reports whether secret is an enabled external credential.
@@ -195,12 +301,10 @@ func (s *Store) HasAccessKey(secret string) bool {
 // AddRequestLog records request metadata and aggregate usage without storing
 // prompts, responses or credentials.
 func (s *Store) AddRequestLog(entry model.RequestLog) error {
-	database, err := s.open()
+	s.databaseOps.RLock()
+	defer s.databaseOps.RUnlock()
+	database, err := s.databaseForOperation()
 	if err != nil {
-		return err
-	}
-	defer database.Close()
-	if err := initialize(database); err != nil {
 		return err
 	}
 	_, err = database.Exec(`INSERT INTO request_logs (
@@ -215,6 +319,9 @@ func (s *Store) AddRequestLog(entry model.RequestLog) error {
 		entry.FirstTokenMs, entry.DurationMs)
 	if err != nil {
 		return err
+	}
+	if s.requestWrites.Add(1)%100 != 0 {
+		return nil
 	}
 	_, err = database.Exec(`DELETE FROM request_logs WHERE id IN (
 		SELECT id FROM request_logs ORDER BY started_at DESC LIMIT -1 OFFSET 10000
@@ -239,18 +346,16 @@ func (s *Store) RequestLogs(limit, offset int, filter ...RequestLogFilter) ([]mo
 
 // RequestLogsWithSummary returns newest matching entries, the total count, and aggregated metrics for the filter.
 func (s *Store) RequestLogsWithSummary(limit, offset int, filter ...RequestLogFilter) ([]model.RequestLog, int, model.RequestLogSummary, error) {
+	s.databaseOps.RLock()
+	defer s.databaseOps.RUnlock()
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	database, err := s.open()
+	database, err := s.databaseForOperation()
 	if err != nil {
-		return nil, 0, model.RequestLogSummary{}, err
-	}
-	defer database.Close()
-	if err := initialize(database); err != nil {
 		return nil, 0, model.RequestLogSummary{}, err
 	}
 	where, arguments := requestLogWhere(filter)
@@ -334,23 +439,52 @@ func requestLogWhere(filters []RequestLogFilter) (string, []any) {
 
 // ClearRequestLogs removes all monitoring history.
 func (s *Store) ClearRequestLogs() error {
-	database, err := s.open()
+	s.databaseOps.RLock()
+	defer s.databaseOps.RUnlock()
+	database, err := s.databaseForOperation()
 	if err != nil {
-		return err
-	}
-	defer database.Close()
-	if err := initialize(database); err != nil {
 		return err
 	}
 	_, err = database.Exec(`DELETE FROM request_logs`)
 	return err
 }
 
+func (s *Store) databaseForOperation() (*sql.DB, error) {
+	return s.ensureDatabase()
+}
+
+func (s *Store) ensureDatabase() (*sql.DB, error) {
+	s.databaseMutex.Lock()
+	defer s.databaseMutex.Unlock()
+	if s.closed {
+		return nil, ErrClosed
+	}
+	if s.database != nil {
+		return s.database, nil
+	}
+	database, err := s.open()
+	if err != nil {
+		return nil, err
+	}
+	if err := initialize(database); err != nil {
+		database.Close()
+		return nil, err
+	}
+	s.database = database
+	return database, nil
+}
+
 func (s *Store) open() (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return nil, err
 	}
-	return sql.Open("sqlite", s.path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	database, err := sql.Open("sqlite", s.path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	database.SetMaxOpenConns(2)
+	database.SetMaxIdleConns(2)
+	return database, nil
 }
 
 func initialize(database *sql.DB) error {

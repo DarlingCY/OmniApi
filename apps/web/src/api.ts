@@ -51,7 +51,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  runtimeLogs: (signal?: AbortSignal) => request<{ data: RuntimeLog[]; capacity: number }>('/api/v1/runtime-logs', { signal }),
+  runtimeLogs: (signal?: AbortSignal, afterId?: number) => {
+    const query = afterId !== undefined ? `?afterId=${afterId}` : '';
+    return request<{ data: RuntimeLog[]; capacity: number; generation: string }>(`/api/v1/runtime-logs${query}`, { signal });
+  },
   providers: () => request<Provider[]>('/api/v1/providers'),
   syncProviderModels: (value: { providerId?: string; protocol: ProviderProtocol; baseUrl: string; apiKey?: string }) => request<{ models: string[] }>('/api/v1/providers/models:sync', { method: 'POST', body: JSON.stringify(value) }),
   createProvider: (value: Provider) => request<Provider>('/api/v1/providers', { method: 'POST', body: JSON.stringify(value) }),

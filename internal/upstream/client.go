@@ -172,6 +172,15 @@ func publicError(body []byte, status int, fallback string) string {
 
 // Call sends a chat request to a provider and adapts the response shape.
 func (c *Client) Call(ctx context.Context, provider model.Provider, providerModel model.ProviderModel, request model.Request) (*Result, error) {
+	return c.call(ctx, provider, providerModel, request, nil)
+}
+
+// CallWithResponse is like Call, and invokes onResponse after upstream headers arrive.
+func (c *Client) CallWithResponse(ctx context.Context, provider model.Provider, providerModel model.ProviderModel, request model.Request, onResponse func(*http.Response)) (*Result, error) {
+	return c.call(ctx, provider, providerModel, request, onResponse)
+}
+
+func (c *Client) call(ctx context.Context, provider model.Provider, providerModel model.ProviderModel, request model.Request, onResponse func(*http.Response)) (*Result, error) {
 	upstreamModel := strings.TrimSpace(providerModel.UpstreamModel)
 	if upstreamModel == "" {
 		return nil, &Failure{Status: 400, Message: "provider model has no upstream model name"}
@@ -208,6 +217,9 @@ func (c *Client) Call(ctx context.Context, provider model.Provider, providerMode
 			return nil, &Failure{Status: 504, Message: "upstream request timed out", Cause: err}
 		}
 		return nil, &Failure{Status: 502, Message: "upstream request failed", Cause: err}
+	}
+	if onResponse != nil {
+		onResponse(response)
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		defer response.Body.Close()

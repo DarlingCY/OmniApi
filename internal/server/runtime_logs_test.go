@@ -102,6 +102,30 @@ func TestRuntimeLogsRedactSecretsAndBoundHistory(t *testing.T) {
 	}
 }
 
+func TestRuntimeLogsSupportIncrementalReads(t *testing.T) {
+	handler, _ := newTestServer(t, model.Config{})
+	handler.LogRuntime("info", "", "before", "")
+	baseline := call(handler, "GET", "/api/v1/runtime-logs", "", "")
+	var initial struct {
+		Data []runtimeLog `json:"data"`
+	}
+	if err := json.Unmarshal(baseline.Body.Bytes(), &initial); err != nil {
+		t.Fatal(err)
+	}
+	afterID := initial.Data[len(initial.Data)-1].ID
+	handler.LogRuntime("info", "", "after", "")
+	response := call(handler, "GET", fmt.Sprintf("/api/v1/runtime-logs?afterId=%d", afterID), "", "")
+	var result struct {
+		Data []runtimeLog `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Data) != 1 || result.Data[0].ID != afterID+1 || result.Data[0].Message != "after" {
+		t.Fatalf("unexpected incremental logs: %#v", result.Data)
+	}
+}
+
 func TestRuntimeLogsRecordFailoverAndStreamFailure(t *testing.T) {
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(503)

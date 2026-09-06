@@ -116,6 +116,7 @@ func Run(ctx context.Context, options Options) error {
 	if err := configStore.Load(); err != nil {
 		return err
 	}
+	defer configStore.Close()
 	if err := initializeAdminToken(configStore, os.Getenv("OMNI_ADMIN_TOKEN")); err != nil {
 		return err
 	}

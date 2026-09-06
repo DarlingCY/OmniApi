@@ -26,6 +26,7 @@ func newTestServer(t *testing.T, config model.Config) (*Server, *store.Store) {
 	if err := configStore.Replace(config); err != nil {
 		t.Fatalf("config setup failed: %v", err)
 	}
+	t.Cleanup(func() { _ = configStore.Close() })
 	return New(Options{Store: configStore}), configStore
 }
 

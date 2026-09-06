@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, shallowRef } from 'vue';
 import { api } from './api';
 import type { RuntimeLog } from './types';
 
-const logs = ref<RuntimeLog[]>([]);
+const logs = shallowRef<RuntimeLog[]>([]);
 const capacity = ref(1000);
 const busy = ref(false);
 const error = ref('');
@@ -12,6 +12,8 @@ const requestId = ref('');
 let timer: number | undefined;
 let controller: AbortController | undefined;
 let disposed = false;
+let lastLogId = 0;
+let generation = '';
 
 const visibleLogs = computed(() => {
   const source = requestId.value
@@ -30,10 +32,22 @@ async function refresh() {
   controller = new AbortController();
   const timeout = window.setTimeout(() => controller?.abort(), 8000);
   try {
-    const result = await api.runtimeLogs(controller.signal);
+    const isIncremental = lastLogId > 0;
+    const result = await api.runtimeLogs(controller.signal, isIncremental ? lastLogId : undefined);
     if (disposed) return;
-    logs.value = result.data;
-    capacity.value = result.capacity;
+    const maxCapacity = result.capacity || 1000;
+    const generationChanged = generation !== '' && result.generation !== generation;
+    generation = result.generation;
+    capacity.value = maxCapacity;
+
+    if (!isIncremental || generationChanged) {
+      logs.value = result.data.slice(-maxCapacity);
+    } else if (result.data.length > 0) {
+      const merged = logs.value.concat(result.data);
+      logs.value = merged.length > maxCapacity ? merged.slice(-maxCapacity) : merged;
+    }
+
+    lastLogId = logs.value.length > 0 ? logs.value[logs.value.length - 1].id : 0;
     updatedAt.value = time(new Date().toISOString());
     error.value = '';
   } catch (failure) {
@@ -46,15 +60,40 @@ async function refresh() {
   }
 }
 
-async function poll() {
-  await refresh();
-  if (!disposed) timer = window.setTimeout(() => void poll(), 1000);
+function clearTimer() {
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    timer = undefined;
+  }
 }
 
-onMounted(() => void poll());
+async function poll() {
+  clearTimer();
+  if (document.hidden) return;
+  await refresh();
+  if (!disposed && !document.hidden) {
+    timer = window.setTimeout(() => void poll(), 1000);
+  }
+}
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    clearTimer();
+    controller?.abort();
+  } else {
+    void poll();
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  void poll();
+});
+
 onUnmounted(() => {
   disposed = true;
-  window.clearTimeout(timer);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  clearTimer();
   controller?.abort();
 });
 defineExpose({ refresh });

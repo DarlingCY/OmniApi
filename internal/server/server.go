@@ -43,6 +43,9 @@ func New(options Options) *Server {
 		router:   routing.NewRouter(),
 		upstream: upstream.NewClient(0),
 		mux:      http.NewServeMux(),
+		runtimeLogs: runtimeLogBuffer{
+			generation: newRequestID(),
+		},
 	}
 	server.routes()
 	server.LogRuntime("info", "", "网关已初始化", "上游模型请求不限制总时长，由客户端连接控制取消；运行日志保留本次启动的最近 1000 条")
@@ -180,15 +183,11 @@ func (s *Server) createProvider(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	trimModels(provider.Models)
-	config := s.store.Get()
-	for _, existing := range config.Providers {
-		if existing.ID == provider.ID {
+	if err := s.store.AddProvider(provider); err != nil {
+		if errors.Is(err, store.ErrProviderExists) {
 			writeError(writer, http.StatusConflict, "Provider id already exists")
 			return
 		}
-	}
-	config.Providers = append(config.Providers, provider)
-	if err := s.store.Replace(config); err != nil {
 		writeError(writer, http.StatusInternalServerError, "Provider could not be saved")
 		return
 	}
@@ -206,28 +205,14 @@ func (s *Server) updateProvider(writer http.ResponseWriter, request *http.Reques
 		writeError(writer, http.StatusBadRequest, "Request body must be a JSON object")
 		return
 	}
-	config := s.store.Get()
-	index := -1
-	for i, existing := range config.Providers {
-		if existing.ID == id {
-			index = i
-			break
-		}
-	}
-	if index < 0 {
-		writeError(writer, http.StatusNotFound, "Provider not found")
-		return
-	}
 	replacement := body.Provider
 	replacement.ID = id
 	trimModels(replacement.Models)
-	if body.APIKey == nil {
-		replacement.APIKey = config.Providers[index].APIKey
-	} else {
-		replacement.APIKey = *body.APIKey
-	}
-	config.Providers[index] = replacement
-	if err := s.store.Replace(config); err != nil {
+	if err := s.store.UpdateProvider(id, replacement, body.APIKey); err != nil {
+		if errors.Is(err, store.ErrProviderNotFound) {
+			writeError(writer, http.StatusNotFound, "Provider not found")
+			return
+		}
 		writeError(writer, http.StatusInternalServerError, "Provider could not be saved")
 		return
 	}
@@ -237,19 +222,11 @@ func (s *Server) updateProvider(writer http.ResponseWriter, request *http.Reques
 
 func (s *Server) deleteProvider(writer http.ResponseWriter, request *http.Request) {
 	id := request.PathValue("id")
-	config := s.store.Get()
-	remaining := make([]model.Provider, 0, len(config.Providers))
-	for _, existing := range config.Providers {
-		if existing.ID != id {
-			remaining = append(remaining, existing)
+	if err := s.store.DeleteProvider(id); err != nil {
+		if errors.Is(err, store.ErrProviderNotFound) {
+			writeError(writer, http.StatusNotFound, "Provider not found")
+			return
 		}
-	}
-	if len(remaining) == len(config.Providers) {
-		writeError(writer, http.StatusNotFound, "Provider not found")
-		return
-	}
-	config.Providers = remaining
-	if err := s.store.Replace(config); err != nil {
 		writeError(writer, http.StatusInternalServerError, "Provider could not be removed")
 		return
 	}
@@ -347,10 +324,22 @@ func (s *Server) proxy(kind string) http.HandlerFunc {
 				selected = target
 				detail := targetDetail(target, attempts)
 				s.LogRuntime("info", requestID, "开始上游转发", detail)
-				stopWaiting := s.trackWaiting(requestID, "仍在等待上游响应或首个事件", detail)
+				stopResponseWaiting := s.trackWaiting(requestID, "仍在等待上游 HTTP 响应", detail)
+				stopFirstEventWaiting := func() {}
+				responseReceived := false
 				attemptStarted := time.Now()
-				result, callErr := s.upstream.Call(ctx, target.Provider, target.Model, internal)
-				stopWaiting()
+				result, callErr := s.upstream.CallWithResponse(ctx, target.Provider, target.Model, internal, func(response *http.Response) {
+					responseReceived = true
+					stopResponseWaiting()
+					s.LogRuntime("info", requestID, "已收到上游 HTTP 响应", fmt.Sprintf("%s status=%d", detail, response.StatusCode))
+					if internal.Stream && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+						stopFirstEventWaiting = s.trackWaiting(requestID, "已收到上游响应，仍在等待首个可转发内容", detail)
+					}
+				})
+				if !responseReceived {
+					stopResponseWaiting()
+				}
+				stopFirstEventWaiting()
 				if callErr != nil {
 					status := http.StatusBadGateway
 					var failure *upstream.Failure
