@@ -5,7 +5,7 @@ RUN npm ci
 COPY apps/web ./apps/web
 RUN npx vite build --config apps/web/vite.config.ts
 
-FROM golang:1.24-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

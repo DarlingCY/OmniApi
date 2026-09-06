@@ -4,8 +4,12 @@
 !go.sum
 !package.json
 !package-lock.json
+!cmd
 !cmd/**
+!internal
 !internal/**
+!apps
+!apps/web
 !apps/web/**
 internal/webui/dist/**
 !internal/webui/dist/.gitkeep
