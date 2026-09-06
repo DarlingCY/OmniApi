@@ -142,7 +142,6 @@ header h1 { margin: 3px 0 0; color: var(--ink); font: 700 30px Bahnschrift, "Mic
 .model-row { grid-template-columns: minmax(230px, 1.2fr) minmax(220px, 1fr); }
 .model-identity { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(110px, auto); gap: 18px; }.model-identity > div { display: grid; min-width: 0; gap: 5px; }.model-identity small { color: var(--muted); font-size: 11px; }.model-identity code, .model-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route-chain { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }.route-chain span { display: flex; align-items: center; gap: 7px; }.route-chain b { display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--radius-control); background: var(--accent-soft); color: var(--accent); font-size: 10px; }
-.settings-panel { max-width: 760px; margin-left: max(0px, calc((100% - 1240px) / 2)); }.settings-panel .arco-alert { margin-bottom: 22px; }.settings-panel form { max-width: 560px; }
 .access-keys-surface { width: 100%; max-width: none; padding: 20px 24px; }
 .access-key-toolbar { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 .access-key-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }

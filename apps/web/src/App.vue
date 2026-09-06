@@ -80,7 +80,6 @@ const syncedModels = ref<string[]>([]);
 const selectedSyncedModels = ref<string[]>([]);
 const modelSearch = ref('');
 const tokenInput = ref(getAdminToken());
-const settingForm = reactive({ adminToken: '' });
 const accessKeyDialog = ref(false);
 const createdKeyDialog = ref(false);
 const accessKeyName = ref('');
@@ -434,22 +433,6 @@ function confirmDeleteProvider(id: string, name: string) {
       } catch (error) { Message.error((error as Error).message); }
     },
   });
-}
-
-async function saveSettings() {
-  const nextToken = settingForm.adminToken.trim();
-  saving.value = true;
-  try {
-    await api.saveSettings({ adminToken: nextToken || undefined });
-    if (nextToken) {
-      setAdminToken(nextToken);
-      tokenInput.value = nextToken;
-    }
-    settingForm.adminToken = '';
-    Message.success('管理 Token 已更新');
-    await loadAll();
-  } catch (error) { Message.error((error as Error).message); }
-  finally { saving.value = false; }
 }
 
 function openAccessKeyDialog(accessKey?: AccessKey) {
