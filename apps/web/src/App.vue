@@ -608,7 +608,6 @@ onUnmounted(() => {
           <button :class="{ active: view === 'settings' }" @click="view = 'settings'"><icon-settings />访问设置</button>
         </nav>
         <div class="sidebar-footer">
-          <div class="service-state"><span></span><div><strong>服务运行中</strong><small>仅本机可访问</small></div></div>
           <a-tooltip :content="theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'" position="right">
             <button class="theme-toggle-btn" :aria-label="theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'" @click="toggleTheme">
               <icon-sun v-if="theme === 'dark'" />

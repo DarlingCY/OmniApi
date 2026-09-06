@@ -14,10 +14,10 @@ let controller: AbortController | undefined;
 let disposed = false;
 
 const visibleLogs = computed(() => {
-  if (requestId.value) {
-    return logs.value.filter((entry) => entry.requestId === requestId.value).slice().reverse();
-  }
-  return logs.value.slice().reverse();
+  const source = requestId.value
+    ? logs.value.filter((entry) => entry.requestId === requestId.value)
+    : logs.value;
+  return source.slice(-22).reverse();
 });
 
 function time(value: string) {
