@@ -1,6 +1,6 @@
 services:
   omni-api:
-    image: ghcr.io/darlingcy/omniapi:latest
+    image: omni-api:latest
     container_name: omni-api
     restart: unless-stopped
     ports:

@@ -1,4 +1,4 @@
-name: Docker Release
+name: Docker Offline Image Release
 
 on:
   push:
@@ -7,12 +7,20 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
-  docker:
-    name: Build & Push Docker Image
+  docker-offline:
+    name: Build & Export Offline Docker Images
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,31 +31,52 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-
-      - name: Generate docker-compose.yml for release
+      - name: Build and Export Offline Image (${{ matrix.arch }})
         shell: bash
         run: |
           mkdir -p release-assets
-          cat << EOF > release-assets/docker-compose.yml
+          PKG_NAME="omni-api-${{ github.ref_name }}-docker-${{ matrix.arch }}"
+          IMAGE_TAG="omni-api:${{ github.ref_name }}"
+
+          echo "Building Docker image for ${{ matrix.platform }}..."
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --build-arg VERSION=${{ github.ref_name }} \
+            -t "${IMAGE_TAG}" \
+            -t "omni-api:latest" \
+            --output type=docker,dest=release-assets/${PKG_NAME}.tar \
+            .
+
+          echo "Compressing offline image archive..."
+          gzip -9 release-assets/${PKG_NAME}.tar
+
+          cd release-assets
+          sha256sum "${PKG_NAME}.tar.gz" > "${PKG_NAME}.tar.gz.sha256"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-${{ matrix.arch }}
+          path: release-assets/*
+
+  release:
+    name: Create GitHub Release
+    needs: docker-offline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate docker-compose.yml and usage instructions
+        shell: bash
+        run: |
+          cat << 'EOF' > release-assets/docker-compose.yml
           services:
             omni-api:
-              image: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+              image: omni-api:latest
               container_name: omni-api
               restart: unless-stopped
               ports:
@@ -55,29 +84,38 @@ jobs:
               volumes:
                 - omni-api-data:/data
               environment:
-                - OMNI_MASTER_KEY=\${OMNI_MASTER_KEY:-}
+                - OMNI_MASTER_KEY=${OMNI_MASTER_KEY:-}
 
           volumes:
             omni-api-data:
           EOF
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cat << 'EOF' > release-assets/导入镜像与运行说明.txt
+          【离线镜像导入与运行说明】
 
-      - name: Create GitHub Release
+          1. 导入离线镜像包（以 x86_64 / amd64 为例）：
+             docker load -i omni-api-v*-docker-amd64.tar.gz
+
+             (导入后本地将自动生成镜像标签 omni-api:latest 与 omni-api:v*)
+
+          2. 一键启动服务（推荐）：
+             在当前目录下包含 docker-compose.yml，执行：
+             docker compose up -d
+
+          3. 也可以直接用命令行运行：
+             docker run -d \
+               --name omni-api \
+               -p 47831:47831 \
+               -v omni-api-data:/data \
+               --restart unless-stopped \
+               omni-api:latest
+          EOF
+
+      - name: Publish Release with Offline Images
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/docker-compose.yml
+          files: |
+            release-assets/*
           generate_release_notes: true
           draft: false
           prerelease: false
