@@ -5,14 +5,15 @@ RUN npm ci
 COPY apps/web ./apps/web
 RUN npx vite build --config apps/web/vite.config.ts
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.24-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY --from=web /src/internal/webui/dist ./internal/webui/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/omni-api ./cmd/omni-api
+ARG VERSION
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/omni-api ./cmd/omni-api
 
 FROM alpine:3.22
 RUN adduser -D -H -u 10001 omni && apk add --no-cache ca-certificates
