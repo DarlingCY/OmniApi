@@ -16,7 +16,9 @@ ARG VERSION
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/omni-api ./cmd/omni-api
 
 FROM alpine:3.22
-RUN adduser -D -H -u 10001 omni && apk add --no-cache ca-certificates
+RUN adduser -D -H -u 10001 omni \
+	&& apk add --no-cache ca-certificates \
+	&& install -d -o omni -g omni -m 0700 /data
 COPY --from=build /out/omni-api /usr/local/bin/omni-api
 USER omni
 EXPOSE 47831
